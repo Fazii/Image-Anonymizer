@@ -6,6 +6,7 @@ import numpy as np
 from kafka import KafkaProducer
 from kafka import KafkaConsumer
 import cv2
+from io import BytesIO
 
 
 class Anonymizer(threading.Thread):
@@ -20,15 +21,16 @@ class Anonymizer(threading.Thread):
     def run(self):
         producer = KafkaProducer(bootstrap_servers='localhost:9092')
         consumer = KafkaConsumer(bootstrap_servers='localhost:9092',
-                                 auto_offset_reset='earliest',
+                                 auto_offset_reset='latest',
                                  consumer_timeout_ms=1000)
 
         consumer.subscribe(['input-topic'])
 
         while not self.stop_event.is_set():
             for message in consumer:
-                image = base64.decodebytes(message)
-                image = cv2.imread(image)
+                image = base64.b64decode(str(message.value)[2:-1])
+                jpg_as_np = np.frombuffer(image, dtype=np.uint8)
+                image = cv2.imdecode(jpg_as_np, flags=1)
                 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
                 lower = np.array([0, 0, 218])
                 upper = np.array([157, 54, 255])
