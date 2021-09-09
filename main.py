@@ -7,8 +7,11 @@ import cv2
 import json
 import numpy as np
 import threading
+import pydicom as dicom
+from io import BytesIO
 from kafka import KafkaConsumer
 from kafka import KafkaProducer
+from PIL import Image
 
 
 class Anonymizer(threading.Thread):
@@ -30,13 +33,14 @@ class Anonymizer(threading.Thread):
 
         while not self.stop_event.is_set():
             for message in consumer:
-                print(message)
                 data = json.loads(str(message.value)[2:-1])
                 anonymizedImage = self.anonymizeImage(data['image'])
                 anonymizedData = self.anonymizeData(data['data'])
+                anonymizedDicom = self.anonymizeDicom(data['dicom'])
                 anonymized = {
                     'data': anonymizedData,
                     'image': anonymizedImage.decode(),
+                    'dicom': anonymizedDicom.decode()
                 }
                 anonymizedJson = json.dumps(anonymized)
                 producer.send('output-topic', anonymizedJson.encode('utf-8'))
@@ -78,10 +82,21 @@ class Anonymizer(threading.Thread):
         return anonymizedData
 
 
-def getInterval(x):
-    floor = int(math.floor(int(x) / 10.0)) * 10
-    return "[" + str(floor) + "-" + str(floor + 10) + "]"
+    def getInterval(x):
+        floor = int(math.floor(int(x) / 10.0)) * 10
+        return "[" + str(floor) + "-" + str(floor + 10) + "]"
 
+    def anonymizeDicom(self, inputDicom):
+        dicomImage = base64.b64decode(inputDicom)
+        im = dicom.dcmread(BytesIO(dicomImage), force=True)
+        im = im.pixel_array.astype(float)
+        rescaled_image = (np.maximum(im, 0) / im.max()) * 255
+        final_image = np.uint8(rescaled_image)
+        final_image = Image.fromarray(final_image)
+        buff = BytesIO()
+        final_image.save(buff, format="JPEG")
+        encoded = base64.b64encode(buff.getvalue()).decode("utf-8")
+        return encoded
 
 def main():
     anonymizer = Anonymizer()
