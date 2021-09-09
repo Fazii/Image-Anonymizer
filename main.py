@@ -34,13 +34,13 @@ class Anonymizer(threading.Thread):
         while not self.stop_event.is_set():
             for message in consumer:
                 data = json.loads(str(message.value)[2:-1])
-                anonymizedImage = self.anonymizeImage(data['image'])
-                anonymizedData = self.anonymizeData(data['data'])
-                anonymizedDicom = self.anonymizeDicom(data['dicom'])
+                anonymizedImage = self.anonymizeImage(data)
+                anonymizedData = self.anonymizeData(data)
+                anonymizedDicom = self.anonymizeDicom(data)
                 anonymized = {
                     'data': anonymizedData,
-                    'image': anonymizedImage.decode(),
-                    'dicom': anonymizedDicom.decode()
+                    'image': anonymizedImage,
+                    'dicom': anonymizedDicom
                 }
                 anonymizedJson = json.dumps(anonymized)
                 producer.send('output-topic', anonymizedJson.encode('utf-8'))
@@ -51,8 +51,11 @@ class Anonymizer(threading.Thread):
         consumer.close()
         producer.close(1000)
 
-    def anonymizeImage(self, inputImg):
-        image = base64.b64decode(inputImg)
+    def anonymizeImage(self, data):
+        if "image" not in data:
+            return None
+
+        image = base64.b64decode(data['image'])
         jpg_as_np = np.frombuffer(image, dtype=np.uint8)
         image = cv2.imdecode(jpg_as_np, flags=1)
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -69,10 +72,14 @@ class Anonymizer(threading.Thread):
             if ar > 5:
                 cv2.drawContours(image, [c], -1, (0, 0, 0), -1)
         _, buffer_image = cv2.imencode('.jpg', image)
-        encoded = base64.b64encode(buffer_image)
+        encoded = base64.b64encode(buffer_image).decode("utf-8")
         return encoded
 
-    def anonymizeData(self, inputData):
+    def anonymizeData(self, data):
+        if "data" not in data:
+            return None
+
+        inputData = data['data']
         anonymizedData = {
             'wiek': getInterval(inputData['wiek']),
             'wzrost': getInterval(inputData['wzrost']),
@@ -86,8 +93,11 @@ class Anonymizer(threading.Thread):
         floor = int(math.floor(int(x) / 10.0)) * 10
         return "[" + str(floor) + "-" + str(floor + 10) + "]"
 
-    def anonymizeDicom(self, inputDicom):
-        dicomImage = base64.b64decode(inputDicom)
+    def anonymizeDicom(self, data):
+        if "dicom" not in data:
+            return None
+
+        dicomImage = base64.b64decode(data['dicom'])
         im = dicom.dcmread(BytesIO(dicomImage), force=True)
         im = im.pixel_array.astype(float)
         rescaled_image = (np.maximum(im, 0) / im.max()) * 255
