@@ -8,6 +8,8 @@ import json
 import numpy as np
 import threading
 import pydicom as dicom
+from pydicom import dcmread, dcmwrite
+from pydicom.filebase import DicomFileLike
 from io import BytesIO
 from kafka import KafkaConsumer
 from kafka import KafkaProducer
@@ -97,16 +99,27 @@ class Anonymizer(threading.Thread):
         if "dicom" not in data:
             return None
 
-        dicomImage = base64.b64decode(data['dicom'])
-        im = dicom.dcmread(BytesIO(dicomImage), force=True)
-        im = im.pixel_array.astype(float)
-        rescaled_image = (np.maximum(im, 0) / im.max()) * 255
-        final_image = np.uint8(rescaled_image)
-        final_image = Image.fromarray(final_image)
-        buff = BytesIO()
-        final_image.save(buff, format="JPEG")
-        encoded = base64.b64encode(buff.getvalue()).decode("utf-8")
-        return encoded
+        dicom_decoded = base64.b64decode(data['dicom'])
+        dataset = dicom.dcmread(BytesIO(dicom_decoded), force=True)
+
+        elements_to_remove = ['PatientID',
+                         'PatientName',
+                         'PatientBirthDate',
+                         'PatientSex',
+                         'PatientAge',
+                         'PatientWeight']
+
+        for el in elements_to_remove:
+            if el in dataset:
+                delattr(dataset, el)
+
+        with BytesIO() as buffer:
+            memory_dataset = DicomFileLike(buffer)
+            dcmwrite(memory_dataset, dataset)
+            memory_dataset.seek(0)
+            bytes = memory_dataset.read()
+            encoded = base64.b64encode(bytes).decode("utf-8")
+            return encoded
 
 def main():
     anonymizer = Anonymizer()
